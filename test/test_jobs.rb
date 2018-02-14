@@ -409,6 +409,24 @@ class CustomRetryCriteriaCheckMultipleFailTwice
   end
 end
 
+# A job that defines a custom retry criteria check via a symbol, for a method
+# that is already defined.
+class CustomRetryCriteriaWithSymbol
+  extend Resque::Plugins::Retry
+  @queue = :testing
+
+  # make sure the retry exceptions check will return false.
+  @retry_exceptions = [CustomException]
+
+  retry_criteria_check :yes
+
+  def self.yes(ex, *args); true; end
+
+  def self.perform(*args)
+    raise
+  end
+end
+
 # A job to test whether self.inherited is respected
 # when added by other modules.
 class InheritOrderingJobExtendFirst
@@ -478,7 +496,7 @@ class PerExceptionClassRetryCountJob
 
   @queue = :testing
   @retry_limit = 3
-  @retry_exceptions = { RuntimeError => 7, Exception => 11, Timeout::Error => 13 }
+  @retry_exceptions = { StandardError => 7, AnotherCustomException => 11, HierarchyCustomException => 13 }
 
   def self.perform
     raise RuntimeError, 'I always fail with a RuntimeError'
@@ -511,4 +529,78 @@ class RetryKilledJob
   def self.perform(*args)
     Process.kill("KILL", Process.pid)
   end
+end
+
+class RetryCallbacksJob
+  extend Resque::Plugins::Retry
+  @queue = :testing
+
+  @fatal_exceptions = [CustomException]
+  @retry_exceptions = [AnotherCustomException]
+  @retry_limit = 1
+
+  def self.perform(is_fatal)
+    if is_fatal
+      raise CustomException, "RetryCallbacksJob failed fatally"
+    else
+      raise AnotherCustomException, "RetryCallbacksJob failed"
+    end
+  end
+
+  def self.on_try_again(ex, *args); end
+  def self.on_try_again_a(ex, *args); end
+  def self.on_try_again_b(ex, *args); end
+  def self.on_try_again_c(ex, *args); end
+
+  def self.on_give_up(ex, *args); end
+  def self.on_give_up_a(ex, *args); end
+  def self.on_give_up_b(ex, *args); end
+  def self.on_give_up_c(ex, *args); end
+
+  @try_again_callbacks = [
+    lambda { |*args| self.on_try_again(*args) },
+    :on_try_again_a
+  ]
+
+  try_again_callback do |*args|
+    on_try_again_b(*args)
+  end
+
+  try_again_callback :on_try_again_c
+
+  @give_up_callbacks = [
+    lambda { |*args| self.on_give_up(*args) },
+    :on_give_up_a
+  ]
+
+  give_up_callback do |*args|
+    on_give_up_b(*args)
+  end
+
+  give_up_callback :on_give_up_c
+end
+
+class IgnoreExceptionsJob
+  extend Resque::Plugins::Retry
+  @queue = :testing
+  @ignore_exceptions = [CustomException]
+  @retry_exceptions = [CustomException, AnotherCustomException]
+  @retry_limit = 3
+
+  def self.perform
+    "Hello, World!"
+  end
+end
+
+class IgnoreExceptionsImproperlyConfiguredJob1
+  # Manually extend Resque::Plugins::Retry in the test code to catch the
+  # exception.
+  @ignore_exceptions = [CustomException]
+end
+
+class IgnoreExceptionsImproperlyConfiguredJob2
+  # Manually extend Resque::Plugins::Retry in the test code to catch the
+  # exception.
+  @ignore_exceptions = [CustomException]
+  @retry_exceptions = { AnotherCustomException => 0 }
 end
